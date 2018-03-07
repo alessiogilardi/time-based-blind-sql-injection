@@ -481,7 +481,7 @@ def main(argv):
     # Seleziono un database
     choice = print_user_choice_table(databases, 'Databases found:')
     db_name = databases[choice]
-    print('\nDatabase selected: %s\n' % db_name)
+    print '\nDatabase selected: %s\n' % db_name
 
     # Cerco le tabelle del database selezionato
     print 'Looking for tables in %s, please wait...\n' % db_name
