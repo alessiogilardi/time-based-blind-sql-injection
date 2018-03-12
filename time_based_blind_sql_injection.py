@@ -26,7 +26,7 @@ QUERY_TYPE_VALUE = 2
 
 verbose = 0
 log = 0
-LOG_FILE_NAME = 'time_based.log'
+LOG_FILE_NAME = 'challenge4.log'
 
 # MySQL DB Tables #
 INFORMATION_SCHEMA_DB_NAME = 'information_schema' # Nome del db che mantiene le info su DB, tabelle e colonne
