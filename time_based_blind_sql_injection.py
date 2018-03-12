@@ -168,7 +168,7 @@ def evaluate_sleep_time(response_time):
 		return response_time * 5
 	elif response_time >= 1 and response_time < 5:
 		return response_time
-	elif response_time > 5:
+	elif response_time >= 5:
 		return response_time * 0.5
 
 # Determina quali dei campi passati al tool sono iniettabili e che ti di injection utilizzare ('-- -', '\' AND \'1\'=\'1', '')
