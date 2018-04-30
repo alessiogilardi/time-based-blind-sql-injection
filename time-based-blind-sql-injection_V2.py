@@ -121,7 +121,7 @@ def isVulnerable(url, method, headers, cookies, data):
 		return True
 	return False
 
-def seacrhFieldVulnerabilities(url, method, headers, cookies, field, data):
+def searchFieldVulnerabilities(url, method, headers, cookies, field, data):
 	mData = data.copy()
 	sql	  = '{} AND SLEEP({}) {}'
 
