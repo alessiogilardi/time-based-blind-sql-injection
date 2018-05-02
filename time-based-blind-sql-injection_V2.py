@@ -115,6 +115,8 @@ def isVulnerable(url, method, headers, cookies, data):
 		return True
 	return False
 
+def checkDelayedServer
+
 def searchFieldVulnerabilities(url, method, headers, cookies, field, data):
 	mData = data.copy()
 	sql	  = '{} AND SLEEP({}) {}'
