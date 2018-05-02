@@ -130,7 +130,7 @@ def searchFieldVulnerabilities(url, method, headers, cookies, field, data):
 	return None
 
 
-# Generates a dictionary with fields as key and a list [quote_type, suffix_type]
+# Generates a dictionary with fields as key and a list {'quote_type':'', 'suffix_type':''}
 def searchVulnerableFields(url, method, headers, cookies, data):
 	vulnerableFields = {}
 	for field in data:
