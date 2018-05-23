@@ -107,7 +107,7 @@ def calculateSleepTime(serverResponseTime):
 		return serverResponseTime * 0.5
 
 
-# Correctly forged data are passed to this function to test if the field is injectable or if the server is delayed by input
+# Correctly forged data are passed to this function to test if the field is injectable and if the server is delayed by input
 def isDelayed(url, method, headers, cookies, data):
 	global sleepTime
 	if measureMeanServerResponseTime(url, method, headers, cookies, data) >= sleepTime:
