@@ -1,4 +1,4 @@
-prova push vera
+prova push vera""""22222
 #!/bin/sh
 #/etc/init.d/myService
 export PATH=$PATH:/usr/local/bin
