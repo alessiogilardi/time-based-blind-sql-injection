@@ -1,4 +1,4 @@
-
+nuova prova push
 #!/bin/sh
 #/etc/init.d/myService
 export PATH=$PATH:/usr/local/bin
