@@ -56,9 +56,9 @@ def stringToInt(string, separator = ','):
 
 def makeRequest(url, method, headers = {}, cookies = {}, data = {}):
 	if method == METHODS[GET]:
-		return requests.get(url, headers = headers, cookies = cookies, params = data.items())
+		return requests.get(url, headers = headers, cookies = cookies, params = data)
 	elif method == METHODS[POST]:
-		return requests.post(url, headers = headers, cookies = cookies, data = data.items())
+		return requests.post(url, headers = headers, cookies = cookies, data = data)
 	else:
 		return None
 
